@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Roboflow Video Analysis</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'styles.css' %}" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Roboflow Video Analysis</h1>
+      <p>Upload a video file and analyze its frames using Roboflow.</p>
+
+      <!-- File Upload Form -->
+      <form id="uploadForm" method="POST" enctype="multipart/form-data">
+        {% csrf_token %}
+        <label for="videoFile">Select a video file:</label>
+        <input
+          type="file"
+          id="videoFile"
+          name="video_file"
+          accept="video/*"
+          required
+        />
+        <button type="submit">Analyze Video</button>
+      </form>
+
+      <!-- Loading Indicator -->
+      <div
+        id="loading"
+        style="display: none; text-align: center; margin-top: 20px"
+      >
+        <div class="spinner"></div>
+        <p style="margin-top: 10px">Analyzing Video...</p>
+      </div>
+
+      <!-- Results Section -->
+      <div id="results" class="hidden">
+        <h2>Analysis Results</h2>
+        <table id="predictions" class="result-table">
+          <thead>
+            <tr>
+              <th>Frame</th>
+              <th>Prediction</th>
+              <th>Confidence</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Predictions will be dynamically inserted here -->
+          </tbody>
+        </table>
+
+        <!-- Charts Section -->
+        <div id="charts" style="margin-top: 30px">
+          <h3>Data Visualization</h3>
+          <div style="margin-bottom: 20px">
+            <canvas id="objectCountsChart" width="400" height="200"></canvas>
+          </div>
+          <div>
+            <canvas
+              id="confidenceScoresChart"
+              width="400"
+              height="200"
+            ></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Modal for Image Preview -->
+      <div id="imageModal" class="modal">
+        <span class="close">&times;</span>
+        <canvas id="imagePreview" width="600" height="400"></canvas>
+      </div>
+    </div>
+
+    <script>
+      document
+        .getElementById("uploadForm")
+        .addEventListener("submit", function (event) {
+          event.preventDefault(); // Prevent default form submission
+
+          const formData = new FormData(this);
+
+          // Show loading indicator
+          document.getElementById("loading").style.display = "block";
+
+          fetch("/analyze-video/", {
+            method: "POST",
+            body: formData,
+            headers: {
+              "X-CSRFToken": document.querySelector(
+                "[name=csrfmiddlewaretoken]"
+              ).value,
+            },
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              console.log("Server Response:", data); // Log the server response
+
+              // Hide loading indicator
+              document.getElementById("loading").style.display = "none";
+
+              const resultsDiv = document.getElementById("results");
+              const predictionsTable = document
+                .getElementById("predictions")
+                .getElementsByTagName("tbody")[0];
+
+              predictionsTable.innerHTML = ""; // Clear previous results
+
+              if (data.error) {
+                predictionsTable.innerHTML = `
+                                <tr>
+                                    <td colspan="4">Error: ${data.error}</td>
+                                </tr>
+                            `;
+              } else if (data.length === 0) {
+                predictionsTable.innerHTML = `
+                                <tr>
+                                    <td colspan="4">No predictions found.</td>
+                                </tr>
+                            `;
+              } else {
+                // Initialize data structures for visualization
+                const objectCounts = {};
+                const confidenceScores = {};
+
+                data.forEach((prediction) => {
+                  const result = prediction.result;
+                  let predictionText = "No Prediction";
+                  let confidence = "N/A";
+                  let frameName = prediction.frame || "N/A";
+
+                  if (result && result.length > 0) {
+                    const label = result[0].label || "Unknown";
+                    confidence = result[0].confidence || 0;
+
+                    // Update object counts
+                    if (!objectCounts[label]) {
+                      objectCounts[label] = 0;
+                    }
+                    objectCounts[label]++;
+
+                    // Update confidence scores
+                    if (!confidenceScores[label]) {
+                      confidenceScores[label] = [];
+                    }
+                    confidenceScores[label].push(confidence);
+
+                    // Populate table rows
+                    predictionText = label;
+                  }
+
+                  predictionsTable.innerHTML += `
+                                    <tr>
+                                        <td>${frameName}</td>
+                                        <td>${predictionText}</td>
+                                        <td>${
+                                          typeof confidence === "number"
+                                            ? confidence.toFixed(2)
+                                            : confidence
+                                        }</td>
+                                        <td>
+                                            <button onclick="showDetails('${frameName}')">View Details</button>
+                                        </td>
+                                    </tr>
+                                `;
+                });
+
+                // Calculate average confidence scores
+                const avgConfidenceScores = {};
+                for (const [label, scores] of Object.entries(
+                  confidenceScores
+                )) {
+                  avgConfidenceScores[label] =
+                    scores.reduce((sum, score) => sum + score, 0) /
+                    scores.length;
+                }
+
+                // Render charts
+                renderCharts(objectCounts, avgConfidenceScores);
+
+                resultsDiv.style.display = "block"; // Show results
+              }
+            })
+            .catch((error) => {
+              console.error("Error:", error);
+              alert("An error occurred while processing the video.");
+              // Hide loading indicator on error
+              document.getElementById("loading").style.display = "none";
+            });
+        });
+
+      // Function to show image in modal
+      function showDetails(frameName) {
+        // Open the modal
+        const modal = document.getElementById("imageModal");
+        modal.style.display = "block";
+
+        // Get the canvas element
+        const canvas = document.getElementById("imagePreview");
+        const ctx = canvas.getContext("2d");
+
+        // Clear the canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Fetch the raw image
+        const img = new Image();
+        img.src = `/media/frames/${frameName}`;
+
+        img.onload = () => {
+          // Draw the image on the canvas
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          // Fetch the prediction data for the specific frame
+          fetch(`/get-predictions/${frameName}`, {
+            method: "GET",
+          })
+            .then((response) => response.json())
+            .then((predictions) => {
+              // Draw bounding boxes and labels
+              predictions.forEach((prediction) => {
+                const x = prediction.x;
+                const y = prediction.y;
+                const width = prediction.width;
+                const height = prediction.height;
+                const label = prediction.class || "Unknown";
+                const confidence = prediction.confidence || 0;
+
+                // Draw bounding box
+                ctx.strokeStyle = "red";
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x, y, width, height);
+
+                // Draw label and confidence
+                ctx.fillStyle = "white";
+                ctx.font = "12px Arial";
+                ctx.fillText(
+                  `${label} (${confidence.toFixed(2)})`,
+                  x + 5,
+                  y + 15
+                );
+              });
+            })
+            .catch((error) => {
+              console.error("Error fetching predictions:", error);
+            });
+        };
+      }
+
+      // Close the modal when the close button is clicked
+      document.querySelector(".close").addEventListener("click", function () {
+        const modal = document.getElementById("imageModal");
+        modal.style.display = "none";
+      });
+
+      // Close the modal when clicking outside the modal content
+      window.addEventListener("click", function (event) {
+        const modal = document.getElementById("imageModal");
+        if (event.target === modal) {
+          modal.style.display = "none";
+        }
+      });
+
+      // Function to render charts
+      function renderCharts(objectCounts, avgConfidenceScores) {
+        const objectLabels = Object.keys(objectCounts);
+        const objectValues = Object.values(objectCounts);
+
+        const confidenceLabels = Object.keys(avgConfidenceScores);
+        const confidenceValues = Object.values(avgConfidenceScores);
+
+        // Render Object Counts Chart
+        const objectCountsCtx = document
+          .getElementById("objectCountsChart")
+          .getContext("2d");
+        new Chart(objectCountsCtx, {
+          type: "bar",
+          data: {
+            labels: objectLabels,
+            datasets: [
+              {
+                label: "Object Counts",
+                data: objectValues,
+                backgroundColor: "rgba(75, 192, 192, 0.6)",
+                borderColor: "rgba(75, 192, 192, 1)",
+                borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                display: true,
+              },
+              title: {
+                display: true,
+                text: "Object Detection Counts",
+              },
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  stepSize: 1,
+                },
+              },
+            },
+          },
+        });
+
+        // Render Average Confidence Scores Chart
+        const confidenceScoresCtx = document
+          .getElementById("confidenceScoresChart")
+          .getContext("2d");
+        new Chart(confidenceScoresCtx, {
+          type: "bar",
+          data: {
+            labels: confidenceLabels,
+            datasets: [
+              {
+                label: "Average Confidence Scores",
+                data: confidenceValues,
+                backgroundColor: "rgba(255, 99, 132, 0.6)",
+                borderColor: "rgba(255, 99, 132, 1)",
+                borderWidth: 1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: {
+                display: true,
+              },
+              title: {
+                display: true,
+                text: "Average Confidence Scores",
+              },
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                max: 1,
+                ticks: {
+                  stepSize: 0.1,
+                },
+              },
+            },
+          },
+        });
+      }
+      document
+        .getElementById("downloadFramesButton")
+        .addEventListener("click", function () {
+          window.location.href = "/download-frames/";
+        });
+    </script>
+  </body>
+</html>
