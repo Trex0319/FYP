@@ -47,11 +47,34 @@ def analyze_video(request):
         for frame_path, prediction in predictions.items():
             results.append({
                 'frame': os.path.basename(frame_path),
-                'result': prediction
+                'result': prediction.get('predictions', []) if prediction else []
             })
 
-        return JsonResponse(results, safe=False)
-    return JsonResponse({'error': 'Invalid request'}, status=400)
+        predictions = run_roboflow_inference(frame_paths, api_url, api_key)
+
+    # Save predictions to the database
+    for frame_path, prediction in predictions.items():
+        if prediction and prediction.get("predictions"):
+            for pred in prediction["predictions"]:
+                Prediction.objects.create(
+                    frame=os.path.basename(frame_path),
+                    x=pred["x"],
+                    y=pred["y"],
+                    width=pred["width"],
+                    height=pred["height"],
+                    class_label=pred["class"],
+                    confidence=pred["confidence"],
+                )
+
+    # Prepare response
+    results = []
+    for frame_path, prediction in predictions.items():
+        results.append({
+            'frame': os.path.basename(frame_path),
+            'result': prediction
+        })
+
+    return JsonResponse(results, safe=False)
 
 def download_frames(request):
     # Path to the directory containing frame images

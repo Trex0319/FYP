@@ -146,17 +146,16 @@ button:hover {
 }
 
 .modal-content {
-  margin: 10% auto;
-  padding: 20px;
-  background-color: #fefefe;
-  border: 1px solid #888;
-  width: 80%;
-  max-width: 600px;
+  margin: auto;
+  display: block;
+  max-width: 90%; /* Limit modal width */
+  max-height: 90vh; /* Limit modal height */
+  overflow: auto; /* Allow scrolling if content exceeds modal size */
 }
 
-.modal img {
-  max-width: 100%;
-  height: auto;
+#imagePreview {
+  max-width: 100%; /* Ensure canvas does not exceed modal width */
+  max-height: 100%; /* Ensure canvas does not exceed modal height */
 }
 
 .close {
